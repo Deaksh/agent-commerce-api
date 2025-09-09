@@ -163,14 +163,33 @@ def extract_product_info(html: str, url: str) -> dict:
 
     # 4️⃣ Myntra
     if "myntra." in url:
-        name_tag = soup.select_one("h1.pdp-title")
-        price_tag = soup.select_one("span.pdp-price, span.pdp-discount-price")
+        name_tag = soup.select_one("h1.pdp-title, h1.pdp-name")  # title can be under pdp-title or pdp-name
+        price_tag = (
+                soup.select_one("span.pdp-price strong") or
+                soup.select_one("span.pdp-discount-price") or
+                soup.select_one("span.pdp-price")
+        )
         avail_tag = soup.find("div", string=lambda t: t and "out of stock" in t.lower())
+
+        # Clean up price (remove ₹, commas, "Rs.", "MRP")
+        clean_price = None
+        if price_tag:
+            clean_price = (
+                price_tag.get_text(strip=True)
+                .replace("₹", "")
+                .replace("Rs.", "")
+                .replace("MRP", "")
+                .replace(",", "")
+                .strip()
+            )
+            # Sometimes Myntra appends "/-" or extra words
+            clean_price = clean_price.split()[0]
+
         product.update({
             "name": name_tag.get_text(strip=True) if name_tag else None,
-            "price": price_tag.get_text(strip=True).replace("₹", "").replace(",", "") if price_tag else None,
-            "currency": "INR" if price_tag else None,
-            "availability": "Out of stock" if avail_tag else "In stock",
+            "price": clean_price,
+            "currency": "INR" if clean_price else None,
+            "availability": "Out of stock" if avail_tag else "In stock"
         })
         return product
 
