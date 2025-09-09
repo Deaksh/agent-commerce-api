@@ -42,13 +42,26 @@ def debug_info():
 
 # ---------- CORE FUNCTIONS ---------- #
 async def fetch_page_playwright(url: str) -> str:
-    """Fetch rendered HTML using Playwright for JS-heavy pages"""
     try:
         async with async_playwright() as p:
-            browser = await p.chromium.launch(headless=True, args=["--disable-http2"])
-            page = await browser.new_page()
-            await page.goto(url, timeout=45000, wait_until="domcontentloaded")
-            await asyncio.sleep(2)  # allow JS hydration
+            browser = await p.chromium.launch(
+                headless=True,
+                args=[
+                    "--no-sandbox",
+                    "--disable-setuid-sandbox",
+                    "--disable-dev-shm-usage",
+                    "--disable-blink-features=AutomationControlled",
+                    "--disable-gpu",
+                    "--disable-software-rasterizer",
+                ],
+            )
+            page = await browser.new_page(user_agent=(
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) "
+                "Chrome/120.0.0.0 Safari/537.36"
+            ))
+            await page.goto(url, timeout=60000, wait_until="networkidle")
+            await page.wait_for_selector("title", timeout=10000)
             content = await page.content()
             await browser.close()
             return content
