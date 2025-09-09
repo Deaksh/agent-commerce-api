@@ -76,6 +76,9 @@ async def fetch_page_playwright(url: str) -> str:
 
             # 🔹 Extra wait for Myntra since data loads late
             if "myntra.com" in url:
+                logging.info("=== DEBUG: Myntra HTML snippet start ===")
+                logging.info(html[:2000])  # log first 2000 chars of page
+                logging.info("=== DEBUG: Myntra HTML snippet end ===")
                 try:
                     await page.wait_for_selector("h1.pdp-title, h1.pdp-name", timeout=5000)
                 except Exception:
