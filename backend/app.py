@@ -57,20 +57,39 @@ async def fetch_page_playwright(url: str) -> str:
                     "--disable-software-rasterizer",
                 ],
             )
-            page = await browser.new_page(user_agent=(
-                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                "AppleWebKit/537.36 (KHTML, like Gecko) "
-                "Chrome/120.0.0.0 Safari/537.36"
-            ))
+
+            context = await browser.new_context(
+                user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                           "AppleWebKit/537.36 (KHTML, like Gecko) "
+                           "Chrome/120.0.0.0 Safari/537.36",
+                viewport={"width": 1280, "height": 800},
+                locale="en-US",
+                extra_http_headers={
+                    "Accept-Language": "en-US,en;q=0.9",
+                    "Referer": "https://www.google.com/"
+                }
+            )
+            page = await context.new_page()
 
             try:
-                # ⏳ Use asyncio timeout wrapper
                 await asyncio.wait_for(
                     page.goto(url, timeout=90000, wait_until="domcontentloaded"),
                     timeout=95,
                 )
-                await page.wait_for_selector("body", timeout=15000)
+
+                # Amazon sometimes lazy-loads product info → scroll
+                await page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
+                await page.wait_for_timeout(2000)
+
+                # Ensure title or price is visible
+                await page.wait_for_selector("title", timeout=10000)
+
                 content = await page.content()
+
+                # ❗ Detect bot-block page
+                if "To discuss automated access to Amazon data" in content or "captcha" in content.lower():
+                    raise HTTPException(status_code=403, detail="Blocked by Amazon bot protection")
+
             except asyncio.TimeoutError:
                 raise HTTPException(status_code=504, detail="Timeout loading page (asyncio)")
             finally:
@@ -80,17 +99,7 @@ async def fetch_page_playwright(url: str) -> str:
     except PlaywrightTimeoutError:
         raise HTTPException(status_code=504, detail="Timeout loading page (playwright)")
     except Exception as e:
-        # Fallback: fetch with httpx
-        try:
-            resp = httpx.get(url, timeout=20, headers={
-                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                              "AppleWebKit/537.36 (KHTML, like Gecko) "
-                              "Chrome/120.0.0.0 Safari/537.36"
-            })
-            resp.raise_for_status()
-            return resp.text
-        except Exception as e2:
-            raise HTTPException(status_code=500, detail=f"Playwright+HTTPX error: {str(e)} | {str(e2)}")
+        raise HTTPException(status_code=500, detail=f"Playwright error: {str(e)}")
 
 
 def extract_product_info(html: str, url: str) -> dict:
