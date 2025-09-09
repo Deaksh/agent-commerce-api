@@ -293,48 +293,77 @@ def extract_meta_fallback(soup: BeautifulSoup) -> Dict[str, Optional[str]]:
         availability = og_avail["content"].strip()
 
     return {"name": name, "price": price, "currency": currency, "availability": availability}
+    
+def extract_product_info(html: str, url: str) -> dict:
+    """Parse product info depending on site (Amazon, Flipkart, Myntra)."""
+    soup = BeautifulSoup(html, "html.parser")
 
-def extract_product_info(html: str, url: str) -> Dict[str, Optional[str]]:
-    soup = BeautifulSoup(html, "lxml")
+    name, price, currency, availability = None, None, None, None
 
-    # 1) JSON-LD if present
-    product = parse_json_ld_product(soup)
-    if product and any(product.values()):
-        return product
-
-    # 2) Site-specific
+    # --- AMAZON ---
     if "amazon." in url:
-        product = extract_amazon(soup)
+        title_tag = soup.find("span", id="productTitle")
+        price_tag = soup.find("span", class_="a-price-whole")
+        currency_tag = soup.find("span", class_="a-price-symbol")
+        availability_tag = soup.find("span", id="availability")
+
+        if title_tag:
+            name = title_tag.get_text(strip=True)
+        if price_tag:
+            price = price_tag.get_text(strip=True).replace(",", "")
+        if currency_tag:
+            currency = currency_tag.get_text(strip=True)
+        if availability_tag:
+            availability = availability_tag.get_text(strip=True)
+
+    # --- FLIPKART ---
     elif "flipkart." in url:
-        product = extract_flipkart(soup)
+        title_tag = soup.find("span", class_="B_NuCI")
+        price_tag = soup.find("div", class_="_30jeq3")
+        availability_tag = (
+            soup.find("div", class_="_16FRp0") or
+            soup.find("div", class_="_2jcMA_") or
+            soup.find("div", class_="_2jcMA_-NpjcY")
+        )
+
+        if title_tag:
+            name = title_tag.get_text(strip=True)
+        if price_tag:
+            price = price_tag.get_text(strip=True).replace("₹", "").replace(",", "")
+            currency = "INR"
+        if availability_tag:
+            availability = availability_tag.get_text(strip=True)
+
+    # --- MYNTRA ---
     elif "myntra." in url:
-        product = extract_myntra(soup)
-    else:
-        product = {"name": None, "price": None, "currency": None, "availability": None}
+        try:
+            script_tag = soup.find("script", id="__NEXT_DATA__")
+            if script_tag and script_tag.string:
+                data = json.loads(script_tag.string)
+                product = data["props"]["pageProps"]["product"]
+                name = f"{product.get('brand', '')} {product.get('name', '')}".strip()
+                price = str(product["price"]["discounted"])
+                currency = product["price"].get("currency", "INR")
+                availability = "In stock" if product.get("inStock", True) else "Out of stock"
+        except Exception as e:
+            logging.error(f"Myntra JSON parse failed: {e}")
 
-    # 3) If still sparse, try meta fallback to fill gaps
-    if not all([product.get("name"), product.get("price"), product.get("currency"), product.get("availability")]):
-        meta = extract_meta_fallback(soup)
-        for k, v in meta.items():
-            if not product.get(k) and v:
-                product[k] = v
-
-    # 4) Final fallback: use <title> for name
-    if not product.get("name"):
+    # --- DEFAULT FALLBACK ---
+    if not name:
         title = soup.find("title")
         if title:
-            product["name"] = title.get_text(strip=True)
+            name = title.get_text(strip=True)
 
-    # Heuristic: currency for Indian sites
-    if product.get("price") and not product.get("currency"):
-        if any(d in url for d in (".in/", "flipkart.", "myntra.")):
-            product["currency"] = "INR"
+    return {
+        "url": url,
+        "product_info": {
+            "name": name,
+            "price": price,
+            "currency": currency,
+            "availability": availability,
+        },
+    }
 
-    # Availability default if none
-    if not product.get("availability"):
-        product["availability"] = "In stock"
-
-    return product
 
 def score_product(product: Dict[str, Optional[str]]) -> Dict[str, Any]:
     score = 0
