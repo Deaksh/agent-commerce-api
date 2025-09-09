@@ -12,7 +12,8 @@ logging.basicConfig(level=logging.INFO)
 
 # Optional: ScraperAPI key for tough sites like Myntra
 SCRAPER_API_KEY = os.getenv("SCRAPER_API_KEY")
-SCRAPER_API_URL = "http://api.scraperapi.com"
+SCRAPER_API_URL = f"http://api.scraperapi.com?api_key={SCRAPER_API_KEY}&url={url}&country_code=in"
+resp = httpx.get(SCRAPER_API_URL, timeout=30)
 
 BROWSER_HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
@@ -22,6 +23,26 @@ BROWSER_HEADERS = {
     "Referer": "https://www.google.com/"
 }
 
+def should_use_proxy(url: str) -> bool:
+    return "amazon." in url or "myntra." in url
+
+
+async def fetch_page(url: str) -> str | None:
+    if should_use_proxy(url) and SCRAPER_API_KEY:
+        logging.info(f"Using proxy for {url}")
+        try:
+            proxy_url = f"{SCRAPER_API_URL}?api_key={SCRAPER_API_KEY}&url={url}&country_code=in&render=true"
+            resp = httpx.get(proxy_url, timeout=30)
+            if resp.status_code == 200:
+                return resp.text
+        except Exception as e:
+            logging.error(f"Proxy fetch failed: {e}")
+
+    # Normal Playwright/httpx fallback
+    html = await fetch_with_playwright(url)
+    if html:
+        return html
+    return fetch_with_httpx(url)
 
 async def fetch_with_playwright(url: str) -> str | None:
     """Fetch using Playwright browser automation."""
