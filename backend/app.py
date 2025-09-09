@@ -10,10 +10,7 @@ from bs4 import BeautifulSoup
 app = FastAPI()
 logging.basicConfig(level=logging.INFO)
 
-# Optional: ScraperAPI key for tough sites like Myntra
 SCRAPER_API_KEY = os.getenv("SCRAPER_API_KEY")
-SCRAPER_API_URL = f"http://api.scraperapi.com?api_key={SCRAPER_API_KEY}&url={url}&country_code=in"
-resp = httpx.get(SCRAPER_API_URL, timeout=30)
 
 BROWSER_HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
@@ -23,29 +20,40 @@ BROWSER_HEADERS = {
     "Referer": "https://www.google.com/"
 }
 
+
 def should_use_proxy(url: str) -> bool:
-    return "amazon." in url or "myntra." in url
+    return any(domain in url for domain in ["amazon.", "myntra.", "flipkart."])
 
 
 async def fetch_page(url: str) -> str | None:
+    # --- Try ScraperAPI (proxy) first if configured ---
     if should_use_proxy(url) and SCRAPER_API_KEY:
-        logging.info(f"Using proxy for {url}")
         try:
-            proxy_url = f"{SCRAPER_API_URL}?api_key={SCRAPER_API_KEY}&url={url}&country_code=in&render=true"
-            resp = httpx.get(proxy_url, timeout=30)
+            proxy_url = "http://api.scraperapi.com"
+            params = {
+                "api_key": SCRAPER_API_KEY,
+                "url": url,
+                "country_code": "in",
+                "render": "true"
+            }
+            resp = httpx.get(proxy_url, params=params, timeout=30)
             if resp.status_code == 200:
+                logging.info("Fetched via ScraperAPI")
                 return resp.text
+            logging.error(f"ScraperAPI failed: {resp.status_code}")
         except Exception as e:
             logging.error(f"Proxy fetch failed: {e}")
 
-    # Normal Playwright/httpx fallback
+    # --- Try Playwright ---
     html = await fetch_with_playwright(url)
     if html:
         return html
+
+    # --- Fallback to raw httpx ---
     return fetch_with_httpx(url)
 
+
 async def fetch_with_playwright(url: str) -> str | None:
-    """Fetch using Playwright browser automation."""
     try:
         async with async_playwright() as p:
             browser = await p.chromium.launch(headless=True, args=["--no-sandbox"])
@@ -61,17 +69,8 @@ async def fetch_with_playwright(url: str) -> str | None:
 
 
 def fetch_with_httpx(url: str) -> str | None:
-    """Fallback to httpx with headers and optional proxy."""
     try:
-        if SCRAPER_API_KEY:
-            resp = httpx.get(
-                SCRAPER_API_URL,
-                params={"api_key": SCRAPER_API_KEY, "url": url, "country_code": "in"},
-                timeout=30,
-            )
-        else:
-            resp = httpx.get(url, headers=BROWSER_HEADERS, timeout=30)
-
+        resp = httpx.get(url, headers=BROWSER_HEADERS, timeout=30)
         if resp.status_code == 200:
             return resp.text
         logging.error(f"httpx failed with {resp.status_code}")
@@ -82,7 +81,6 @@ def fetch_with_httpx(url: str) -> str | None:
 
 
 def extract_product_info(html: str, url: str) -> dict:
-    """Parse product info depending on site (Amazon, Flipkart, Myntra)."""
     soup = BeautifulSoup(html, "html.parser")
 
     name, price, currency, availability = None, None, None, None
@@ -119,11 +117,10 @@ def extract_product_info(html: str, url: str) -> dict:
 
     # --- MYNTRA ---
     elif "myntra." in url:
-        # Title
         title_tag = soup.find("h1", class_="pdp-title")
         subtitle_tag = soup.find("h1", class_="pdp-name")
         price_tag = soup.find("span", class_="pdp-price")
-        availability = "In stock"  # Myntra rarely exposes stock, assume in stock
+        availability = "In stock"
 
         if title_tag and subtitle_tag:
             name = f"{title_tag.get_text(strip=True)} {subtitle_tag.get_text(strip=True)}"
@@ -133,7 +130,7 @@ def extract_product_info(html: str, url: str) -> dict:
             price = price_tag.get_text(strip=True).replace("₹", "").replace(",", "")
             currency = "INR"
 
-    # --- DEFAULT FALLBACK ---
+    # --- FALLBACK ---
     if not name:
         title = soup.find("title")
         if title:
@@ -157,10 +154,7 @@ async def audit(request: Request):
     if not url:
         return JSONResponse({"error": "URL is required"}, status_code=400)
 
-    html = await fetch_with_playwright(url)
-    if not html:
-        html = fetch_with_httpx(url)
-
+    html = await fetch_page(url)
     if not html:
         return JSONResponse({"error": "Failed to fetch page"}, status_code=500)
 
