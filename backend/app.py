@@ -2,16 +2,15 @@
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 from bs4 import BeautifulSoup
-from playwright.async_api import async_playwright, TimeoutError as PlaywrightTimeoutError
+from playwright.async_api import async_playwright
 import json
-import asyncio
 import httpx
 import logging
 
 # ---------- LOGGING ---------- #
 logging.basicConfig(level=logging.INFO)
 
-app = FastAPI(title="Agent-Optimized Commerce API", version="0.2.0")
+app = FastAPI(title="Agent-Optimized Commerce API", version="0.2.1")
 
 # ---------- MODELS ---------- #
 class AuditRequest(BaseModel):
@@ -40,8 +39,8 @@ def health_check():
 def debug_info():
     return {
         "service": "Agent-Optimized Commerce API",
-        "version": "0.2.0",
-        "supported_sites": ["Amazon", "Flipkart", "Myntra (beta)", "Generic marketplaces"],
+        "version": "0.2.1",
+        "supported_sites": ["Amazon", "Flipkart", "Myntra (improved)", "Generic marketplaces"],
     }
 
 
@@ -74,6 +73,14 @@ async def fetch_page_playwright(url: str) -> str:
             )
             page = await context.new_page()
             await page.goto(url, timeout=30000, wait_until="domcontentloaded")
+
+            # 🔹 Extra wait for Myntra since data loads late
+            if "myntra.com" in url:
+                try:
+                    await page.wait_for_selector("h1.pdp-title, h1.pdp-name", timeout=5000)
+                except Exception:
+                    logging.warning("Myntra product title not found within timeout")
+
             await page.wait_for_timeout(2000)
             content = await page.content()
             await browser.close()
@@ -161,17 +168,18 @@ def extract_product_info(html: str, url: str) -> dict:
         })
         return product
 
-    # 4️⃣ Myntra
+    # 4️⃣ Myntra (improved fallback)
     if "myntra." in url:
-        name_tag = soup.select_one("h1.pdp-title, h1.pdp-name")  # title can be under pdp-title or pdp-name
+        name_tag = soup.select_one("h1.pdp-title, h1.pdp-name")
         price_tag = (
-                soup.select_one("span.pdp-price strong") or
-                soup.select_one("span.pdp-discount-price") or
-                soup.select_one("span.pdp-price")
+            soup.select_one("span.pdp-price strong") or
+            soup.select_one("span.pdp-discount-price") or
+            soup.select_one("span.pdp-price")
         )
-        avail_tag = soup.find("div", string=lambda t: t and "out of stock" in t.lower())
+        avail_btn = soup.select_one("button.pdp-add-to-bag")
+        out_of_stock_msg = soup.find(string=lambda t: t and "out of stock" in t.lower())
 
-        # Clean up price (remove ₹, commas, "Rs.", "MRP")
+        # Clean up price
         clean_price = None
         if price_tag:
             clean_price = (
@@ -182,14 +190,15 @@ def extract_product_info(html: str, url: str) -> dict:
                 .replace(",", "")
                 .strip()
             )
-            # Sometimes Myntra appends "/-" or extra words
             clean_price = clean_price.split()[0]
 
         product.update({
             "name": name_tag.get_text(strip=True) if name_tag else None,
             "price": clean_price,
             "currency": "INR" if clean_price else None,
-            "availability": "Out of stock" if avail_tag else "In stock"
+            "availability": "Out of stock" if out_of_stock_msg else (
+                "In stock" if avail_btn else None
+            ),
         })
         return product
 
