@@ -41,6 +41,8 @@ def debug_info():
 
 
 # ---------- CORE FUNCTIONS ---------- #
+import httpx
+
 async def fetch_page_playwright(url: str) -> str:
     try:
         async with async_playwright() as p:
@@ -60,15 +62,35 @@ async def fetch_page_playwright(url: str) -> str:
                 "AppleWebKit/537.36 (KHTML, like Gecko) "
                 "Chrome/120.0.0.0 Safari/537.36"
             ))
-            await page.goto(url, timeout=60000, wait_until="networkidle")
-            await page.wait_for_selector("title", timeout=10000)
-            content = await page.content()
-            await browser.close()
+
+            try:
+                # ⏳ Use asyncio timeout wrapper
+                await asyncio.wait_for(
+                    page.goto(url, timeout=90000, wait_until="domcontentloaded"),
+                    timeout=95,
+                )
+                await page.wait_for_selector("body", timeout=15000)
+                content = await page.content()
+            except asyncio.TimeoutError:
+                raise HTTPException(status_code=504, detail="Timeout loading page (asyncio)")
+            finally:
+                await browser.close()
             return content
+
     except PlaywrightTimeoutError:
-        raise HTTPException(status_code=504, detail="Timeout loading page")
+        raise HTTPException(status_code=504, detail="Timeout loading page (playwright)")
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Playwright error: {str(e)}")
+        # Fallback: fetch with httpx
+        try:
+            resp = httpx.get(url, timeout=20, headers={
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                              "AppleWebKit/537.36 (KHTML, like Gecko) "
+                              "Chrome/120.0.0.0 Safari/537.36"
+            })
+            resp.raise_for_status()
+            return resp.text
+        except Exception as e2:
+            raise HTTPException(status_code=500, detail=f"Playwright+HTTPX error: {str(e)} | {str(e2)}")
 
 
 def extract_product_info(html: str, url: str) -> dict:
