@@ -48,58 +48,23 @@ async def fetch_page_playwright(url: str) -> str:
         async with async_playwright() as p:
             browser = await p.chromium.launch(
                 headless=True,
-                args=[
-                    "--no-sandbox",
-                    "--disable-setuid-sandbox",
-                    "--disable-dev-shm-usage",
-                    "--disable-blink-features=AutomationControlled",
-                    "--disable-gpu",
-                    "--disable-software-rasterizer",
-                ],
+                args=["--no-sandbox", "--disable-dev-shm-usage"],
             )
-
-            context = await browser.new_context(
-                user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                           "AppleWebKit/537.36 (KHTML, like Gecko) "
-                           "Chrome/120.0.0.0 Safari/537.36",
-                viewport={"width": 1280, "height": 800},
-                locale="en-US",
-                extra_http_headers={
-                    "Accept-Language": "en-US,en;q=0.9",
-                    "Referer": "https://www.google.com/"
-                }
-            )
+            context = await browser.new_context()
             page = await context.new_page()
-
-            try:
-                await asyncio.wait_for(
-                    page.goto(url, timeout=90000, wait_until="domcontentloaded"),
-                    timeout=95,
-                )
-
-                # Amazon sometimes lazy-loads product info → scroll
-                await page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
-                await page.wait_for_timeout(2000)
-
-                # Ensure title or price is visible
-                await page.wait_for_selector("title", timeout=10000)
-
-                content = await page.content()
-
-                # ❗ Detect bot-block page
-                if "To discuss automated access to Amazon data" in content or "captcha" in content.lower():
-                    raise HTTPException(status_code=403, detail="Blocked by Amazon bot protection")
-
-            except asyncio.TimeoutError:
-                raise HTTPException(status_code=504, detail="Timeout loading page (asyncio)")
-            finally:
-                await browser.close()
+            await page.goto(url, timeout=30000)  # shorter timeout
+            content = await page.content()
+            await browser.close()
             return content
-
-    except PlaywrightTimeoutError:
-        raise HTTPException(status_code=504, detail="Timeout loading page (playwright)")
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Playwright error: {str(e)}")
+        # fallback to httpx if browser fails
+        try:
+            async with httpx.AsyncClient(timeout=15.0) as client:
+                r = await client.get(url, headers={"User-Agent": "Mozilla/5.0"})
+                r.raise_for_status()
+                return r.text
+        except Exception as http_err:
+            raise HTTPException(status_code=500, detail=f"Both Playwright & httpx failed: {str(http_err)}")
 
 
 def extract_product_info(html: str, url: str) -> dict:
@@ -221,11 +186,17 @@ def audit_product(product: dict) -> tuple[float, list[str]]:
 
 
 # ---------- MAIN AUDIT ENDPOINT ---------- #
+import logging
+logging.basicConfig(level=logging.INFO)
+
 @app.post("/audit", response_model=AuditResponse)
 async def audit_store(request: AuditRequest):
+    logging.info(f"Incoming request: {request.url}")
     try:
         html = await fetch_page_playwright(request.url)
+        logging.info("Fetched page successfully")
         product = extract_product_info(html, request.url)
+        logging.info(f"Extracted product: {product}")
         score, recommendations = audit_product(product)
         return {
             "url": request.url,
@@ -234,6 +205,9 @@ async def audit_store(request: AuditRequest):
             "product_info": product,
         }
     except HTTPException as e:
+        logging.error(f"HTTPException: {e.detail}")
         raise e
     except Exception as e:
+        logging.error(f"Unhandled exception: {e}")
         raise HTTPException(status_code=500, detail=f"Internal error: {str(e)}")
+
