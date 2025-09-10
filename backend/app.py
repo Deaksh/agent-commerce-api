@@ -83,14 +83,14 @@ async def fetch_via_playwright(url: str) -> Optional[str]:
                     "--disable-blink-features=AutomationControlled",
                 ],
             )
+
             context = await browser.new_context(
-                user_agent=(
-                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                    "AppleWebKit/537.36 (KHTML, like Gecko) "
-                    "Chrome/116 Safari/537.36"
-                ),
-                viewport={"width": 1366, "height": 768}
-            )
+            user_agent="Mozilla/5.0 ...",
+            viewport={"width": 1366, "height": 768},
+            locale="en-US",
+            java_script_enabled=True)
+            await context.add_init_script("""Object.defineProperty(navigator, 'webdriver', {get: () => undefined})""")
+            
             page = await context.new_page()
 
             # Use networkidle to force React hydration
