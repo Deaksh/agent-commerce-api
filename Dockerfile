@@ -17,3 +17,7 @@ EXPOSE 8000
 
 # Run FastAPI with Uvicorn
 CMD ["uvicorn", "app:app", "--host", "0.0.0.0", "--port", "8000"]
+
+sudo apt-get update
+sudo apt-get install -y python3-distutils
+
