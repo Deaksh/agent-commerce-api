@@ -88,22 +88,11 @@ async def fetch_via_playwright(url: str) -> Optional[str]:
                     "--disable-blink-features=AutomationControlled",
                 ],
             )
-
             context = await browser.new_context(
-                user_agent=BROWSER_HEADERS["User-Agent"],
-                viewport={"width": 1280, "height": 800},
-                locale="en-IN",
-                extra_http_headers=BROWSER_HEADERS,
-            )
-
-            # try to reduce detection
-            await context.add_init_script(
-                "Object.defineProperty(navigator, 'webdriver', {get: () => undefined});"
-            )
-
+            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/116 Safari/537.36",
+            viewport={"width": 1280, "height": 800})
             page = await context.new_page()
-            # use networkidle for dynamic sites
-            await page.goto(url, timeout=30000, wait_until="networkidle")
+            await page.goto(url, wait_until="domcontentloaded", timeout=60000)
 
             if "myntra." in url:
                 # wait for Next.js JSON if present, and also title/price selectors
