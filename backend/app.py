@@ -1,9 +1,10 @@
 # app.py
 import logging
 from fastapi import FastAPI
-from admin import router as admin_router
 from cache import init_cache, close_cache
 from backend.audit import router as audit_router
+from backend.admin import router as admin_router
+
 
 
 logging.basicConfig(level=logging.INFO)
