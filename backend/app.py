@@ -85,21 +85,32 @@ async def fetch_via_playwright(url: str) -> Optional[str]:
             )
 
             context = await browser.new_context(
-            user_agent="Mozilla/5.0 ...",
-            viewport={"width": 1366, "height": 768},
-            locale="en-US",
-            java_script_enabled=True)
-            await context.add_init_script("""Object.defineProperty(navigator, 'webdriver', {get: () => undefined})""")
-            
+                user_agent=(
+                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                    "AppleWebKit/537.36 (KHTML, like Gecko) "
+                    "Chrome/122.0.0.0 Safari/537.36"
+                ),
+                viewport={"width": 1366, "height": 768},
+                java_script_enabled=True,
+                locale="en-US",
+            )
+
+            # Stealth patch
+            await context.add_init_script(
+                """Object.defineProperty(navigator, 'webdriver', {get: () => undefined});"""
+            )
+
+            # Open a new page
             page = await context.new_page()
 
-            # Use networkidle to force React hydration
-            await page.goto(url, wait_until="networkidle", timeout=60000)
+            # Go to target URL
+            await page.goto(url, wait_until="networkidle", timeout=45000)
 
-            # Simulate human scroll to trigger lazy scripts
-            await page.mouse.wheel(0, 2000)
-            await page.wait_for_timeout(2000)
+            # Scroll to trigger lazy load
+            await page.evaluate("window.scrollBy(0, document.body.scrollHeight)")
+            await page.wait_for_timeout(5000)
 
+            # Special handling for Myntra
             if "myntra." in url:
                 try:
                     await page.wait_for_selector("#__NEXT_DATA__", timeout=20000)
@@ -107,19 +118,24 @@ async def fetch_via_playwright(url: str) -> Optional[str]:
                     log.info("Playwright: __NEXT_DATA__ not found on Myntra, fallback to DOM")
 
                 try:
-                    await page.wait_for_selector("h1.pdp-title, h1.pdp-name, span.pdp-price", timeout=20000)
+                    await page.wait_for_selector(
+                        "h1.pdp-title, h1.pdp-name, span.pdp-price", timeout=20000
+                    )
                 except Exception:
                     log.info("Playwright: Myntra fallback selectors also missing")
 
+            # Extract final HTML
             html = await page.content()
+
+            await context.close()
             await browser.close()
+
             log.info("Fetched page with Playwright ✅")
             return html
+
     except Exception as e:
         log.warning(f"Playwright fetch failed: {e}")
         return None
-
-
 
 async def fetch_via_proxy(url: str) -> Optional[str]:
     """Use ScraperAPI (or any similar service) as a fallback for Render blocking."""
