@@ -3,7 +3,7 @@ import logging
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from typing import Optional, Dict, Any
-from backend.cache import get_cache, set_cache 
+from cache import get_cache, set_cache 
 from auth import verify_api_key
 import os
 import json
