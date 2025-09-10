@@ -18,6 +18,16 @@ from bs4 import BeautifulSoup
 from playwright.async_api import async_playwright
 import httpx
 
+router = APIRouter()
+
+class AuditResponse(BaseModel):
+    message: str
+
+@router.post("/audit", response_model=AuditResponse)
+async def audit_endpoint():
+    return {"message": "Audit log created"}
+
+
 # logging
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger("agent-commerce")
@@ -26,7 +36,6 @@ log = logging.getLogger("agent-commerce")
 SCRAPER_API_KEY = os.getenv("SCRAPER_API_KEY")  # e.g. from ScraperAPI, set on Render dashboard
 SCRAPER_API_ENDPOINT = "http://api.scraperapi.com"
 
-router = APIRouter()
 
 # Models
 class AuditRequest(BaseModel):
