@@ -3,7 +3,7 @@ import logging
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from typing import Optional, Dict, Any
-from cache import get_cache, set_cache
+from backend.cache import get_cache, set_cache 
 from auth import verify_api_key
 import os
 import json
@@ -38,6 +38,16 @@ class AuditResponse(BaseModel):
     product_info: dict
 
 
+@router.get("/audit/{key}")
+async def get_audit_cache(key: str):
+    value = await get_cache(key)
+    return {"key": key, "value": value}
+
+@router.post("/audit/{key}")
+async def set_audit_cache(key: str, value: dict):
+    await set_cache(key, value)
+    return {"status": "success", "key": key}
+    
 # ---------- helpers ----------
 BROWSER_HEADERS = {
     "User-Agent": (
