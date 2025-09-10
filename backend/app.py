@@ -12,6 +12,8 @@ log = logging.getLogger("agent-commerce")
 
 app = FastAPI(title="Agent-Optimized Commerce API", version="0.4.0")
 
+app.include_router(audit_router)
+
 # Routers
 app.include_router(audit_router)
 app.include_router(admin_router)
