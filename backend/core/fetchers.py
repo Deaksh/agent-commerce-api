@@ -25,7 +25,9 @@ async def fetch_via_playwright(url: str) -> str | None:
 async def fetch_via_proxy(url: str) -> str | None:
     """Fetch using ScraperAPI (requires SCRAPER_API_KEY in env)."""
     if not SCRAPER_API_KEY:
+        log.warning("SCRAPER_API_KEY not set, skipping proxy")
         return None
+
     params = {
         "api_key": SCRAPER_API_KEY,
         "url": url,
