@@ -37,16 +37,6 @@ class AuditResponse(BaseModel):
     recommendations: list[str]
     product_info: dict
 
-
-@router.get("/audit/{key}")
-async def get_audit_cache(key: str):
-    value = await get_cache(key)
-    return {"key": key, "value": value}
-
-@router.post("/audit/{key}")
-async def set_audit_cache(key: str, value: dict):
-    await set_cache(key, value)
-    return {"status": "success", "key": key}
     
 # ---------- helpers ----------
 BROWSER_HEADERS = {
