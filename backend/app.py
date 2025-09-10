@@ -76,15 +76,14 @@ async def fetch_page_playwright(url: str) -> str:
 
             # 🔹 Extra wait for Myntra since data loads late
             if "myntra.com" in url:
-                logging.info("=== DEBUG: Myntra HTML snippet start ===")
-                logging.info(html[:2000])  # log first 2000 chars of page
-                logging.info("=== DEBUG: Myntra HTML snippet end ===")
                 try:
-                    await page.wait_for_selector("h1.pdp-title, h1.pdp-name", timeout=5000)
+                    # wait for product title or price to appear
+                    await page.wait_for_selector("h1.pdp-title, h1.pdp-name", timeout=10000)
+                    await page.wait_for_selector("span.pdp-price, span.pdp-discount-price, span.pdp-offers-offerPrice", timeout=10000)
                 except Exception:
-                    logging.warning("Myntra product title not found within timeout")
-
-            await page.wait_for_timeout(2000)
+                    logging.warning("Myntra product details not found within timeout")
+            
+            await page.wait_for_timeout(3000)  # give extra time for JS hydration
             content = await page.content()
             await browser.close()
 
@@ -172,17 +171,19 @@ def extract_product_info(html: str, url: str) -> dict:
         return product
 
     # 4️⃣ Myntra (improved fallback)
+    # inside extract_product_info, Myntra block
     if "myntra." in url:
         name_tag = soup.select_one("h1.pdp-title, h1.pdp-name")
         price_tag = (
             soup.select_one("span.pdp-price strong") or
             soup.select_one("span.pdp-discount-price") or
+            soup.select_one("span.pdp-offers-offerPrice") or
             soup.select_one("span.pdp-price")
         )
         avail_btn = soup.select_one("button.pdp-add-to-bag")
-        out_of_stock_msg = soup.find(string=lambda t: t and "out of stock" in t.lower())
-
-        # Clean up price
+        oos_btn = soup.select_one("button.pdp-out-of-stock")
+        oos_text = soup.find(string=lambda t: t and "out of stock" in t.lower())
+    
         clean_price = None
         if price_tag:
             clean_price = (
@@ -191,19 +192,22 @@ def extract_product_info(html: str, url: str) -> dict:
                 .replace("Rs.", "")
                 .replace("MRP", "")
                 .replace(",", "")
+                .replace("/-", "")
                 .strip()
             )
             clean_price = clean_price.split()[0]
-
+    
         product.update({
             "name": name_tag.get_text(strip=True) if name_tag else None,
             "price": clean_price,
             "currency": "INR" if clean_price else None,
-            "availability": "Out of stock" if out_of_stock_msg else (
+            "availability": (
+                "Out of stock" if (oos_btn or oos_text) else
                 "In stock" if avail_btn else None
-            ),
+            )
         })
         return product
+
 
     # 5️⃣ Fallback: title
     product.update({
