@@ -1,8 +1,8 @@
 # app.py
 import os
+import re
 import json
 import logging
-import re
 import asyncio
 from typing import Optional, Dict, Any
 
@@ -16,10 +16,10 @@ import httpx
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger("agent-commerce")
 
-app = FastAPI(title="Agent-Optimized Commerce API", version="0.3.1")
+app = FastAPI(title="Agent-Optimized Commerce API", version="0.4.0")
 
 # optional proxy key (set in Render env)
-SCRAPER_API_KEY = os.getenv("SCRAPER_API_KEY")  # e.g. from ScraperAPI, set on Render dashboard
+SCRAPER_API_KEY = os.getenv("SCRAPER_API_KEY")
 SCRAPER_API_ENDPOINT = "http://api.scraperapi.com"
 
 # Models
@@ -50,7 +50,6 @@ def clean_price(text: Optional[str]) -> Optional[str]:
     if not text:
         return None
     t = text.strip()
-    # remove currency symbols and non-digit chars except dot
     t = t.replace("₹", "").replace("Rs.", "").replace("MRP", "").replace("/-", "")
     t = re.sub(r"[^\d.]", "", t)
     return t or None
@@ -67,11 +66,18 @@ def is_block_page(url: str, html: Optional[str]) -> bool:
     # amazon-specific checks
     if "amazon." in url and ("to discuss automated access to amazon data" in t or "enter the characters you see below" in t):
         return True
+    # flipkart: some 529 pages include "error" or "denied"
+    if "flipkart." in url and ("error" in t and "access" in t):
+        return True
     return False
 
 
 # ---------- fetching layer ----------
-async def fetch_via_playwright(url: str) -> Optional[str]:
+async def fetch_via_playwright(url: str, timeout: int = 45000) -> Optional[str]:
+    """
+    Use Playwright to render pages. Contains small stealth patches and scrolling.
+    Returns HTML or None.
+    """
     try:
         async with async_playwright() as p:
             browser = await p.chromium.launch(
@@ -85,62 +91,78 @@ async def fetch_via_playwright(url: str) -> Optional[str]:
             )
 
             context = await browser.new_context(
-                user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+                user_agent=BROWSER_HEADERS["User-Agent"],
                 viewport={"width": 1366, "height": 768},
-                java_script_enabled=True,
-                locale="en-US",
+                locale="en-IN",
+                extra_http_headers=BROWSER_HEADERS,
             )
 
-            # make bot detection harder
+            # small stealth: hide webdriver + set languages/plugins
             await context.add_init_script(
-                """Object.defineProperty(navigator, 'webdriver', {get: () => undefined})"""
+                """
+                Object.defineProperty(navigator, 'webdriver', {get: () => undefined});
+                Object.defineProperty(navigator, 'languages', {get: () => ['en-US', 'en']});
+                Object.defineProperty(navigator, 'plugins', {get: () => [1,2,3]});
+                window.chrome = { runtime: {} };
+                """
             )
 
-            # ✅ FIX: create page *before* navigating
             page = await context.new_page()
-            await page.goto(url, wait_until="networkidle", timeout=45000)
+            # Prefer networkidle to allow Next/React hydration
+            await page.goto(url, wait_until="networkidle", timeout=timeout)
 
-            # scroll + wait for lazy loaded content
-            await page.evaluate("window.scrollBy(0, document.body.scrollHeight)")
-            await page.wait_for_timeout(5000)
+            # Scroll to trigger lazy hydrations
+            try:
+                await page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
+            except Exception:
+                pass
+            await page.wait_for_timeout(2000)
 
+            # Extra waits for Myntra (heavy hydration)
             if "myntra." in url:
                 try:
-                    await page.wait_for_selector("#__NEXT_DATA__", timeout=20000)
+                    await page.wait_for_selector("#__NEXT_DATA__", timeout=15000)
                 except Exception:
-                    log.info("Playwright: __NEXT_DATA__ not found on Myntra, fallback to DOM")
-
+                    log.info("Playwright: __NEXT_DATA__ not found on Myntra (or timed out)")
                 try:
-                    await page.wait_for_selector("h1.pdp-title, h1.pdp-name, span.pdp-price", timeout=20000)
+                    await page.wait_for_selector("h1.pdp-title, h1.pdp-name, span.pdp-price, span.pdp-discount-price", timeout=15000)
                 except Exception:
-                    log.info("Playwright: Myntra fallback selectors also missing")
+                    log.info("Playwright: Myntra content selectors not seen quickly")
+
+                # give a bit more time
+                await page.wait_for_timeout(2000)
 
             html = await page.content()
+            await context.close()
             await browser.close()
-            log.info("Fetched page with Playwright ✅")
+            log.info("Fetched page with Playwright")
             return html
-
     except Exception as e:
-        log.warning(f"Playwright fetch failed: {e}")
+        log.warning("Playwright fetch failed: %s", e)
         return None
+
 
 async def fetch_via_proxy(url: str) -> Optional[str]:
-    """Use ScraperAPI (or any similar service) as a fallback for Render blocking."""
+    """Use ScraperAPI (or similar) as a proxy + renderer. Returns HTML or None."""
     if not SCRAPER_API_KEY:
         return None
+
     params = {
         "api_key": SCRAPER_API_KEY,
         "url": url,
         "country_code": "in",
-        "render": "true",  # ask the provider to render JS if supported
+        "render": "true",
+        "device_type": "desktop",
+        "keep_headers": "true",
     }
+
     try:
         async with httpx.AsyncClient(timeout=30) as client:
             r = await client.get(SCRAPER_API_ENDPOINT, params=params)
             if r.status_code == 200:
                 log.info("Fetched page via proxy (ScraperAPI)")
                 return r.text
-            log.warning(f"Proxy returned status {r.status_code}")
+            log.warning("Proxy returned status %s", r.status_code)
             return None
     except Exception as e:
         log.error("Proxy fetch failed: %s", e)
@@ -154,7 +176,7 @@ async def fetch_via_httpx(url: str) -> Optional[str]:
             if r.status_code == 200:
                 log.info("Fetched page via httpx")
                 return r.text
-            log.warning("httpx returned %s", r.status_code)
+            log.warning("httpx returned %s for %s", r.status_code, url)
             return None
     except Exception as e:
         log.error("httpx fetch failed: %s", e)
@@ -163,17 +185,25 @@ async def fetch_via_httpx(url: str) -> Optional[str]:
 
 async def fetch_page(url: str) -> Optional[str]:
     """
-    Fetch order:
-      1) Playwright (rendered)
-      2) If block or missing Myntra-specific data -> Proxy (if configured)
-      3) httpx fallback
+    Deterministic fetch strategy:
+      - Myntra: proxy-first (if SCRAPER_API_KEY set) to avoid Render IP blocks;
+                else Playwright -> httpx.
+      - Others: Playwright -> proxy (if key) -> httpx.
+    IMPORTANT: if proxy returns OK, return immediately (do not try direct requests).
     """
-    # 1) Playwright
+    # Myntra: proxy-first when key present
+    if "myntra." in url and SCRAPER_API_KEY:
+        proxy_html = await fetch_via_proxy(url)
+        if proxy_html and not is_block_page(url, proxy_html):
+            return proxy_html
+        # if proxy failed or returned block, continue to try Playwright/httpx as last resort
+
+    # 1) Playwright for most interactive sites
     html = await fetch_via_playwright(url)
     if html and not is_block_page(url, html):
         return html
 
-    # 2) Proxy if configured
+    # 2) Proxy (for other sites) - but only if not previously used for Myntra
     if SCRAPER_API_KEY:
         proxy_html = await fetch_via_proxy(url)
         if proxy_html and not is_block_page(url, proxy_html):
@@ -184,13 +214,12 @@ async def fetch_page(url: str) -> Optional[str]:
     if http_html and not is_block_page(url, http_html):
         return http_html
 
-    # last return whatever we have (even if blocked) so caller can log and decide
+    # last: return whatever we have (even if blocked) so caller can inspect/log
     return html or proxy_html or http_html
 
 
 # ---------- JSON helpers to extract Myntra product data ----------
 def find_in_obj(obj, key_name):
-    """Recursive search for key_name in nested dict/list; returns first value found or None."""
     if isinstance(obj, dict):
         if key_name in obj:
             return obj[key_name]
@@ -207,14 +236,8 @@ def find_in_obj(obj, key_name):
 
 
 def find_product_dict(obj):
-    """
-    Try to find a plausible product dict inside arbitrary JSON.
-    Heuristics: dict containing 'name' and some 'price'/'mrp'/'discount' keys.
-    """
     if isinstance(obj, dict):
-        keys = obj.keys()
-        # direct product
-        if "name" in obj and ("price" in obj or "priceData" in obj or "mrp" in obj or "finalPrice" in obj):
+        if "name" in obj and any(k in obj for k in ("price", "priceData", "mrp", "finalPrice", "discountedPrice")):
             return obj
         for v in obj.values():
             res = find_product_dict(v)
@@ -229,23 +252,19 @@ def find_product_dict(obj):
 
 
 def extract_price_from_product_dict(pdict: Dict[str, Any]) -> Optional[str]:
-    """Try many common price fields used by Myntra"""
     if not isinstance(pdict, dict):
         return None
     candidates = []
-    # Common nested structures
     for k in ("discountedPrice", "discounted", "finalPrice", "sellingPrice", "price", "mrp"):
         v = pdict.get(k)
         if v:
             candidates.append(v)
-    # Some structures keep price inside nested dict "price": {"discounted": ...}
     price_node = pdict.get("price")
     if isinstance(price_node, dict):
         for k in ("discounted", "final", "sellingPrice", "value"):
             v = price_node.get(k)
             if v:
                 candidates.append(v)
-    # If candidates contain objects, try to extract numbers
     for c in candidates:
         if isinstance(c, (int, float)):
             return str(c)
@@ -254,7 +273,6 @@ def extract_price_from_product_dict(pdict: Dict[str, Any]) -> Optional[str]:
             if cp:
                 return cp
         if isinstance(c, dict):
-            # deep search for numeric
             for inner in c.values():
                 if isinstance(inner, (int, float)):
                     return str(inner)
@@ -262,7 +280,6 @@ def extract_price_from_product_dict(pdict: Dict[str, Any]) -> Optional[str]:
                     cp = clean_price(inner)
                     if cp:
                         return cp
-    # fallback: try to find any digits in JSON dump of dict
     dumped = json.dumps(pdict)
     m = re.search(r"([0-9]+(?:\.[0-9]+)?)", dumped)
     if m:
@@ -272,14 +289,14 @@ def extract_price_from_product_dict(pdict: Dict[str, Any]) -> Optional[str]:
 
 # ---------- parser layer ----------
 def extract_product_info(html: str, url: str) -> Dict[str, Optional[str]]:
-    """Extract product info from HTML (amazon/flipkart preserved), Myntra improved with __NEXT_DATA__ parsing"""
     soup = BeautifulSoup(html or "", "lxml")
     product = {"name": None, "price": None, "currency": None, "availability": None}
 
-    # 1) JSON-LD first (works for some pages)
+    # 1) JSON-LD
     for script in soup.find_all("script", {"type": "application/ld+json"}):
         try:
-            data = json.loads(script.string)
+            raw = script.string or script.get_text()
+            data = json.loads(raw)
             if isinstance(data, list):
                 data = next((d for d in data if isinstance(d, dict) and d.get("@type") == "Product"), None)
             if isinstance(data, dict) and data.get("@type") == "Product":
@@ -296,7 +313,7 @@ def extract_product_info(html: str, url: str) -> Dict[str, Optional[str]]:
         except Exception:
             continue
 
-    # 2) OpenGraph/meta fallback
+    # 2) OG/meta
     meta_map = {
         "name": ["og:title", "twitter:title"],
         "price": ["product:price:amount", "og:price:amount"],
@@ -312,7 +329,7 @@ def extract_product_info(html: str, url: str) -> Dict[str, Optional[str]]:
     if any(product.values()):
         return product
 
-    # 3) site-specific parsing
+    # 3) site-specific
     if "amazon." in url:
         name_tag = soup.select_one("#productTitle, span#title, h1 span")
         price_tag = soup.select_one("#priceblock_ourprice, #priceblock_dealprice, span.a-price span.a-offscreen")
@@ -344,30 +361,29 @@ def extract_product_info(html: str, url: str) -> Dict[str, Optional[str]]:
         })
         return product
 
-    # Myntra: prefer parsing __NEXT_DATA__ JSON (Next.js)
+    # Myntra: prefer __NEXT_DATA__ JSON
     if "myntra." in url:
-        # 1) try __NEXT_DATA__ script tag
-        script_tag = soup.find("script", {"id": "__NEXT_DATA__"})
+        # 1) try id="__NEXT_DATA__"
         data_obj = None
-        if script_tag and script_tag.string:
+        script_tag = soup.find("script", {"id": "__NEXT_DATA__"})
+        if script_tag:
+            raw = script_tag.string or script_tag.get_text()
             try:
-                raw = script_tag.string
                 data_obj = json.loads(raw)
             except Exception as e:
-                log.warning("Failed to parse __NEXT_DATA__ JSON: %s", e)
+                log.warning("Failed to parse __NEXT_DATA__: %s", e)
 
-        # 2) if not found, scan other scripts for product JSON fragments
+        # 2) scan other scripts for pageProps
         if not data_obj:
             for s in soup.find_all("script"):
-                txt = s.string or s.get_text() or ""
-                if '{"props"' in txt and '"pageProps"' in txt:
+                txt = (s.string or s.get_text() or "")
+                if '"pageProps"' in txt and '"props"' in txt:
+                    # try best-effort extraction
                     try:
-                        # try to extract JSON substring safely
                         obj = json.loads(txt)
                         data_obj = obj
                         break
                     except Exception:
-                        # attempt to find JSON braces substring (best-effort)
                         m = re.search(r"(\{.*\"pageProps\".*\})", txt, flags=re.S)
                         if m:
                             try:
@@ -376,29 +392,22 @@ def extract_product_info(html: str, url: str) -> Dict[str, Optional[str]]:
                             except Exception:
                                 continue
 
-        # 3) If we found a JSON data_obj, find product dict
         product_data = None
         if data_obj:
-            # common path: props.pageProps.product
             pp = data_obj.get("props", {}).get("pageProps", {})
             product_data = pp.get("product") or pp.get("pdp") or find_in_obj(pp, "product")
             if not product_data:
-                # fallback: recursive search for product-like dict
                 product_data = find_product_dict(data_obj)
 
-        # 4) extract fields from product_data if available
         if product_data:
             name = product_data.get("name") or product_data.get("displayName") or product_data.get("productName")
             price = extract_price_from_product_dict(product_data)
             currency = None
-            # check price node for currency if present
             if isinstance(product_data.get("price"), dict):
                 currency = product_data.get("price").get("currency") or product_data.get("price").get("currencyCode")
-            # fallback heuristics
             if not currency and price:
                 currency = "INR"
             availability = None
-            # many Myntra structures have inStock / isInStock flags
             if isinstance(product_data.get("inStock"), bool):
                 availability = "In stock" if product_data.get("inStock") else "Out of stock"
             elif isinstance(product_data.get("stock"), dict):
@@ -410,11 +419,10 @@ def extract_product_info(html: str, url: str) -> Dict[str, Optional[str]]:
                 "currency": currency,
                 "availability": availability,
             })
-            # if we got a name or price, return result
             if product.get("name") or product.get("price"):
                 return product
 
-        # 5) Fallback to DOM selectors (if JSON fails)
+        # DOM fallback for Myntra
         name_tag = soup.select_one("h1.pdp-title, h1.pdp-name")
         price_tag = (
             soup.select_one("span.pdp-price strong")
@@ -438,7 +446,7 @@ def extract_product_info(html: str, url: str) -> Dict[str, Optional[str]]:
         })
         return product
 
-    # 4) Generic fallback: title + heuristics
+    # Generic fallback: title
     title = soup.find("title")
     product.update({
         "name": title.get_text(strip=True) if title else None,
@@ -478,11 +486,11 @@ async def audit_store(request: AuditRequest):
     if not html:
         raise HTTPException(status_code=502, detail="Failed to fetch target page")
 
-    # if we detect a block page, surface an explicit error so you can see it in render logs
+    # If we detect a block page, try proxy once more for Myntra specifically,
+    # otherwise surface the block so you can see it in Render logs.
     if is_block_page(url, html):
         log.warning("Detected block page for %s", url)
-        # if we have proxy key, try proxy once more
-        if SCRAPER_API_KEY:
+        if "myntra." in url and SCRAPER_API_KEY:
             proxy_html = await fetch_via_proxy(url)
             if proxy_html and not is_block_page(url, proxy_html):
                 html = proxy_html
