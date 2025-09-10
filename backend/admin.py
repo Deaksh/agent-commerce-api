@@ -1,7 +1,7 @@
 # admin.py
 from fastapi import APIRouter, Depends
-from auth import verify_api_key
-from cache import clear_cache
+from backend.auth import verify_api_key
+from backend.cache import clear_cache
 
 router = APIRouter()
 
