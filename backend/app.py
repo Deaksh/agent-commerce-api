@@ -487,17 +487,24 @@ async def audit_store(request: AuditRequest):
     url = request.url
     log.info("Audit requested for: %s", url)
 
-    # 🔹 Special case: Myntra should always go through proxy
+    # 🔹 Special case: Myntra → always via proxy
     if "myntra.com" in url:
         if not SCRAPER_API_KEY:
             raise HTTPException(status_code=403, detail="Myntra requires proxy but no SCRAPER_API_KEY is set")
 
         log.info("Myntra detected → forcing proxy fetch")
         proxy_html = await fetch_via_proxy(url)
-        if not proxy_html or is_block_page(url, proxy_html):
-            raise HTTPException(status_code=403, detail="Myntra returned a block page, even via proxy")
 
+        if not proxy_html:
+            raise HTTPException(status_code=502, detail="Failed to fetch Myntra page via proxy")
+
+        # ✅ Try extracting product info even if block markers exist
         product = extract_product_info(proxy_html, url)
+
+        if not product.get("name") and not product.get("price"):
+            log.warning("Myntra: proxy fetch returned block page with no usable product data")
+            raise HTTPException(status_code=403, detail="Myntra returned a block page, product info missing")
+
         score, recommendations = audit_product(product)
         return {
             "url": url,
@@ -511,10 +518,8 @@ async def audit_store(request: AuditRequest):
     if not html:
         raise HTTPException(status_code=502, detail="Failed to fetch target page")
 
-    # if we detect a block page, surface an explicit error so you can see it in render logs
     if is_block_page(url, html):
         log.warning("Detected block page for %s", url)
-        # if we have proxy key, try proxy once more
         if SCRAPER_API_KEY:
             proxy_html = await fetch_via_proxy(url)
             if proxy_html and not is_block_page(url, proxy_html):
@@ -532,3 +537,4 @@ async def audit_store(request: AuditRequest):
         "recommendations": recommendations,
         "product_info": product,
     }
+
