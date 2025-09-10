@@ -487,6 +487,26 @@ async def audit_store(request: AuditRequest):
     url = request.url
     log.info("Audit requested for: %s", url)
 
+    # 🔹 Special case: Myntra should always go through proxy
+    if "myntra.com" in url:
+        if not SCRAPER_API_KEY:
+            raise HTTPException(status_code=403, detail="Myntra requires proxy but no SCRAPER_API_KEY is set")
+
+        log.info("Myntra detected → forcing proxy fetch")
+        proxy_html = await fetch_via_proxy(url)
+        if not proxy_html or is_block_page(url, proxy_html):
+            raise HTTPException(status_code=403, detail="Myntra returned a block page, even via proxy")
+
+        product = extract_product_info(proxy_html, url)
+        score, recommendations = audit_product(product)
+        return {
+            "url": url,
+            "score": score,
+            "recommendations": recommendations,
+            "product_info": product,
+        }
+
+    # 🔹 Default flow (Amazon, Flipkart, etc.)
     html = await fetch_page(url)
     if not html:
         raise HTTPException(status_code=502, detail="Failed to fetch target page")
