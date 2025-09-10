@@ -26,6 +26,8 @@ log = logging.getLogger("agent-commerce")
 SCRAPER_API_KEY = os.getenv("SCRAPER_API_KEY")  # e.g. from ScraperAPI, set on Render dashboard
 SCRAPER_API_ENDPOINT = "http://api.scraperapi.com"
 
+router = APIRouter()
+
 # Models
 class AuditRequest(BaseModel):
     url: str
