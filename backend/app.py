@@ -106,14 +106,21 @@ async def fetch_via_playwright(url: str) -> Optional[str]:
 
             if "myntra." in url:
                 try:
-                    await page.wait_for_selector("#__NEXT_DATA__", timeout=20000)
+                    # Wait longer for Next.js hydration
+                    await page.wait_for_selector("#__NEXT_DATA__", timeout=30000)
+                    log.info("Playwright: __NEXT_DATA__ found on Myntra ✅")
                 except Exception:
-                    log.info("Playwright: __NEXT_DATA__ not found on Myntra, fallback to DOM")
-
+                    log.warning("Playwright: __NEXT_DATA__ not found, fallback to DOM")
+                # extra scrolls for safety
+                for _ in range(3):
+                    await page.evaluate("window.scrollBy(0, 1000)")
+                    await page.wait_for_timeout(2000)
+                # fallback selector
                 try:
-                    await page.wait_for_selector("h1.pdp-title, h1.pdp-name, span.pdp-price", timeout=20000)
+                    await page.wait_for_selector("h1.pdp-title, h1.pdp-name", timeout=15000)
                 except Exception:
-                    log.info("Playwright: Myntra fallback selectors also missing")
+                    log.warning("Playwright: Myntra product title not found in DOM fallback")
+
 
             html = await page.content()
             await browser.close()
@@ -379,12 +386,18 @@ def extract_product_info(html: str, url: str) -> Dict[str, Optional[str]]:
         # 3) If we found a JSON data_obj, find product dict
         product_data = None
         if data_obj:
-            # common path: props.pageProps.product
             pp = data_obj.get("props", {}).get("pageProps", {})
-            product_data = pp.get("product") or pp.get("pdp") or find_in_obj(pp, "product")
+            product_data = (
+                pp.get("product")
+                or pp.get("pdp")
+                or pp.get("initialData", {}).get("product")
+                or find_in_obj(pp, "product")
+                or find_in_obj(pp, "productDetails")
+                or find_in_obj(pp, "style")
+            )
             if not product_data:
-                # fallback: recursive search for product-like dict
                 product_data = find_product_dict(data_obj)
+
 
         # 4) extract fields from product_data if available
         if product_data:
