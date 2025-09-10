@@ -21,7 +21,6 @@ import httpx
 # logging
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger("agent-commerce")
-router = APIRouter()
 
 # optional proxy key (set in Render env)
 SCRAPER_API_KEY = os.getenv("SCRAPER_API_KEY")  # e.g. from ScraperAPI, set on Render dashboard
