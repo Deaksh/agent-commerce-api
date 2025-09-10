@@ -72,13 +72,8 @@ def is_block_page(url: str, html: Optional[str]) -> bool:
 
 # ---------- fetching layer ----------
 async def fetch_via_playwright(url: str) -> Optional[str]:
-    """
-    Use Playwright to render pages. For Myntra we wait for the Next.js payload.
-    Return HTML string or None on failure.
-    """
     try:
         async with async_playwright() as p:
-            # Chromium is generally fine; keep no-sandbox flags
             browser = await p.chromium.launch(
                 headless=True,
                 args=[
@@ -89,33 +84,41 @@ async def fetch_via_playwright(url: str) -> Optional[str]:
                 ],
             )
             context = await browser.new_context(
-            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/116 Safari/537.36",
-            viewport={"width": 1280, "height": 800})
+                user_agent=(
+                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                    "AppleWebKit/537.36 (KHTML, like Gecko) "
+                    "Chrome/116 Safari/537.36"
+                ),
+                viewport={"width": 1366, "height": 768}
+            )
             page = await context.new_page()
-            await page.goto(url, wait_until="domcontentloaded", timeout=60000)
+
+            # Use networkidle to force React hydration
+            await page.goto(url, wait_until="networkidle", timeout=60000)
+
+            # Simulate human scroll to trigger lazy scripts
+            await page.mouse.wheel(0, 2000)
+            await page.wait_for_timeout(2000)
 
             if "myntra." in url:
-                # wait for Next.js JSON if present, and also title/price selectors
                 try:
-                    await page.wait_for_selector("#__NEXT_DATA__", timeout=15000)
+                    await page.wait_for_selector("#__NEXT_DATA__", timeout=20000)
                 except Exception:
-                    log.info("Playwright: __NEXT_DATA__ not present or timeout on Myntra")
+                    log.info("Playwright: __NEXT_DATA__ not found on Myntra, fallback to DOM")
+
                 try:
-                    await page.wait_for_selector("h1.pdp-title, h1.pdp-name, span.pdp-price, span.pdp-discount-price", timeout=15000)
+                    await page.wait_for_selector("h1.pdp-title, h1.pdp-name, span.pdp-price", timeout=20000)
                 except Exception:
-                    log.info("Playwright: Myntra content selectors not seen quickly")
-                await page.wait_for_timeout(1500)
-            else:
-                # small wait for other sites to hydrate
-                await page.wait_for_timeout(1000)
+                    log.info("Playwright: Myntra fallback selectors also missing")
 
             html = await page.content()
             await browser.close()
-            log.info("Fetched page with Playwright")
+            log.info("Fetched page with Playwright ✅")
             return html
     except Exception as e:
         log.warning(f"Playwright fetch failed: {e}")
         return None
+
 
 
 async def fetch_via_proxy(url: str) -> Optional[str]:
