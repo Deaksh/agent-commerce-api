@@ -1,0 +1,13 @@
+fastapi
+uvicorn
+httpx
+playwright
+beautifulsoup4
+lxml
+pydantic
+sqlalchemy
+psycopg2-binary
+redis
+pytest
+requests
+aioredis
