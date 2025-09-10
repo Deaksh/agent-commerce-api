@@ -25,4 +25,4 @@ COPY . .
 EXPOSE 8000
 
 # Use --app-dir to fix relative imports
-CMD ["uvicorn", "app:app", "--host", "0.0.0.0", "--port", "8000", "--app-dir", "backend"]
+CMD ["uvicorn", "backend.app:app", "--host", "0.0.0.0", "--port", "8000"]
