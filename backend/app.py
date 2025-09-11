@@ -558,10 +558,11 @@ async def seconds_until_month_end():
 
 
 async def enforce_quota(api_record: dict = Depends(get_api_record)):
-    """
-    Dependency that increments per-month usage and enforces quota.
-    Returns usage dict on success.
-    """
+    if api_record.get("plan") == "rapidapi":
+        # RapidAPI handles quota & billing
+        return {"usage": "handled_by_rapidapi", "quota": "handled_by_rapidapi", "plan": "rapidapi"}
+    
+    # Normal Redis quota check for direct customers
     key_hash = api_record["key_hash"]
     quota = int(api_record.get("quota", 1000))
     month_key = f"usage:{key_hash}:{datetime.datetime.utcnow().strftime('%Y%m')}"
