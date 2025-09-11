@@ -32,7 +32,7 @@ REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")
 ADMIN_TOKEN = os.getenv("ADMIN_TOKEN", "changeme_admin_token")  # protect admin endpoints
 
 # initialize redis client (async)
-redis_client = redis.from_url(REDIS_URL, decode_responses=True, ssl=True)
+redis_client = redis.from_url(REDIS_URL, decode_responses=True)
 
 # ---------- Pydantic models (LLM-friendly) ----------
 class ProductInfo(BaseModel):
