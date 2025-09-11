@@ -1,37 +1,41 @@
 openapi: 3.0.3
 info:
   title: Agent Commerce API
-  description: >
-    Agent Commerce API lets you fetch structured product data (price, availability, description, affiliate-ready links)
-    from major marketplaces like Amazon, Flipkart, and Meesho. Ideal for AI agents, shopping bots, and price comparison tools.
-  version: 1.0.0
+  version: "0.4.0"
+  description: |
+    Extract structured product information from e-commerce pages (Amazon, Flipkart, Myntra, etc.)
+    and audit store readiness for AI agents.
+
 servers:
   - url: https://agent-commerce-api.onrender.com
-    description: Production server
-components:
-  securitySchemes:
-    ApiKeyAuth:
-      type: apiKey
-      in: header
-      name: x-api-key
+
 paths:
-  /search:
-    get:
-      summary: Search product details from marketplaces
+  /audit:
+    post:
+      summary: Audit an e-commerce product page
       description: >
-        Fetch structured product data by passing a product URL from Amazon, Flipkart, or Meesho.
+        Given a product page URL from Flipkart, Amazon, or Myntra,
+        this endpoint extracts structured data (name, price, availability, etc.),
+        evaluates agent-readiness, and returns recommendations.
+      operationId: auditStore
       security:
         - ApiKeyAuth: []
-      parameters:
-        - name: url
-          in: query
-          required: true
-          schema:
-            type: string
-          description: Product URL from Amazon, Flipkart, or Meesho
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - url
+              properties:
+                url:
+                  type: string
+                  format: uri
+                  example: "https://www.flipkart.com/aqua-fresh-smoke-audi-18-ltr-water-purifier/p/itmc3da457d7de29"
       responses:
         "200":
-          description: Product details successfully fetched
+          description: Successful audit response
           content:
             application/json:
               schema:
@@ -39,37 +43,64 @@ paths:
                 properties:
                   url:
                     type: string
+                    format: uri
                   product_info:
                     type: object
                     properties:
-                      name:
-                        type: string
-                      price:
-                        type: number
-                      currency:
-                        type: string
-                      availability:
-                        type: string
-                      brand:
-                        type: string
-                      rating:
-                        type: number
-                      reviews_count:
-                        type: integer
-                      description:
-                        type: string
+                      name: { type: string }
+                      price: { type: number }
+                      price_raw: { type: string }
+                      currency: { type: string }
+                      availability: { type: string }
+                      images:
+                        type: array
+                        items: { type: string, format: uri }
+                      description: { type: string }
+                      brand: { type: string }
+                      sku: { type: string }
+                      rating: { type: number }
+                      reviews_count: { type: integer }
+                      raw_html_excerpt: { type: string }
+                  score:
+                    type: number
+                    description: Audit score (0–100)
                   recommendations:
                     type: array
-                    items:
-                      type: string
+                    items: { type: string }
                   fetched_via:
                     type: string
+                    description: "Fetcher used (playwright | proxy | httpx)"
                   fetched_at:
                     type: string
                     format: date-time
-        "400":
-          description: Invalid request (e.g., missing URL parameter)
         "401":
-          description: Unauthorized (missing or invalid API key)
-        "500":
-          description: Server error
+          description: Missing or invalid API key
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  detail: { type: string, example: "Missing API key" }
+        "422":
+          description: Could not extract product info
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  detail: { type: string, example: "Could not extract product info from target page" }
+        "502":
+          description: Failed to fetch target page
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  detail: { type: string, example: "Failed to fetch target page" }
+
+components:
+  securitySchemes:
+    ApiKeyAuth:
+      type: apiKey
+      in: header
+      name: x-api-key
