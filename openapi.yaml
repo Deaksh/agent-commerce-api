@@ -1,0 +1,75 @@
+openapi: 3.0.3
+info:
+  title: Agent Commerce API
+  description: >
+    Agent Commerce API lets you fetch structured product data (price, availability, description, affiliate-ready links)
+    from major marketplaces like Amazon, Flipkart, and Meesho. Ideal for AI agents, shopping bots, and price comparison tools.
+  version: 1.0.0
+servers:
+  - url: https://agent-commerce-api.onrender.com
+    description: Production server
+components:
+  securitySchemes:
+    ApiKeyAuth:
+      type: apiKey
+      in: header
+      name: x-api-key
+paths:
+  /search:
+    get:
+      summary: Search product details from marketplaces
+      description: >
+        Fetch structured product data by passing a product URL from Amazon, Flipkart, or Meesho.
+      security:
+        - ApiKeyAuth: []
+      parameters:
+        - name: url
+          in: query
+          required: true
+          schema:
+            type: string
+          description: Product URL from Amazon, Flipkart, or Meesho
+      responses:
+        "200":
+          description: Product details successfully fetched
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  url:
+                    type: string
+                  product_info:
+                    type: object
+                    properties:
+                      name:
+                        type: string
+                      price:
+                        type: number
+                      currency:
+                        type: string
+                      availability:
+                        type: string
+                      brand:
+                        type: string
+                      rating:
+                        type: number
+                      reviews_count:
+                        type: integer
+                      description:
+                        type: string
+                  recommendations:
+                    type: array
+                    items:
+                      type: string
+                  fetched_via:
+                    type: string
+                  fetched_at:
+                    type: string
+                    format: date-time
+        "400":
+          description: Invalid request (e.g., missing URL parameter)
+        "401":
+          description: Unauthorized (missing or invalid API key)
+        "500":
+          description: Server error
