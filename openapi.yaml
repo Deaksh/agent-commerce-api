@@ -103,4 +103,4 @@ components:
     ApiKeyAuth:
       type: apiKey
       in: header
-      name: x-api-key
+      name: X-RapidAPI-Key
