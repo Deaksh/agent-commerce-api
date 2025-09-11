@@ -526,21 +526,28 @@ async def get_api_record_from_hash(h: str) -> Optional[dict]:
     return rec
 
 
-async def get_api_record(api_key: str = Header(None, alias="x-api-key")):
-    """
-    Dependency to validate x-api-key header and return the record.
-    """
-    if not api_key:
-        raise HTTPException(status_code=401, detail="Missing API key")
-    h = hash_key(api_key)
-    rec = await get_api_record_from_hash(h)
-    if not rec:
-        raise HTTPException(status_code=401, detail="Invalid API key")
-    if rec.get("disabled") == "1":
-        raise HTTPException(status_code=403, detail="API key disabled")
-    # include the hash for quota usage operations
-    rec["key_hash"] = h
-    return rec
+
+async def get_api_record(
+    x_api_key: str = Header(None, alias="x-api-key"),
+    x_rapidapi_key: str = Header(None, alias="X-RapidAPI-Key")
+):
+    # Case 1: Direct customer key (your Redis)
+    if x_api_key:
+        h = hash_key(x_api_key)
+        rec = await get_api_record_from_hash(h)
+        if not rec:
+            raise HTTPException(status_code=401, detail="Invalid API key (direct)")
+        if rec.get("disabled") == "1":
+            raise HTTPException(status_code=403, detail="API key disabled")
+        rec["key_hash"] = h
+        return rec
+
+    # Case 2: RapidAPI user (skip Redis, trust RapidAPI gateway)
+    if x_rapidapi_key:
+        return {"plan": "rapidapi", "quota": "handled_by_rapidapi"}
+
+    # If neither header is present
+    raise HTTPException(status_code=401, detail="Missing API key")
 
 
 async def seconds_until_month_end():
