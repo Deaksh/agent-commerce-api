@@ -5,10 +5,9 @@ info:
   description: |
     Extract structured product information from e-commerce pages (Amazon, Flipkart, Myntra, etc.)
     and audit store readiness for AI agents.
-
 servers:
-  - url: https://agent-commerce-audit1.p.rapidapi.com
-    description: RapidAPI proxy server
+  - url: https://agent-commerce-api.onrender.com
+    description: Render server (your backend)
 
 paths:
   /audit:
