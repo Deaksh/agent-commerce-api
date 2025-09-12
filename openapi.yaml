@@ -20,7 +20,7 @@ paths:
         evaluates agent-readiness, and returns recommendations.
       operationId: auditStore
       security:
-        - ApiKeyAuth: []
+        - rapidapiKey: []
       requestBody:
         required: true
         content:
