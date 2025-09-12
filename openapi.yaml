@@ -7,7 +7,8 @@ info:
     and audit store readiness for AI agents.
 
 servers:
-  - url: https://agent-commerce-api.onrender.com
+  - url: https://agent-commerce-audit1.p.rapidapi.com
+    description: RapidAPI proxy server
 
 paths:
   /audit:
@@ -100,7 +101,9 @@ paths:
 
 components:
   securitySchemes:
-    ApiKeyAuth:
+    rapidapiKey:
       type: apiKey
       in: header
       name: X-RapidAPI-Key
+security:
+  - rapidapiKey: []
