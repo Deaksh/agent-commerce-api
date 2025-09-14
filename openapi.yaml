@@ -5,6 +5,7 @@ info:
   description: |
     Extract structured product information from e-commerce pages (Amazon, Flipkart, Myntra, etc.)
     and audit store readiness for AI agents.
+
 servers:
   - url: https://agent-commerce-api.onrender.com
     description: Render server (your backend)
@@ -19,7 +20,7 @@ paths:
         evaluates agent-readiness, and returns recommendations.
       operationId: auditStore
       security:
-        - rapidapiKey: []
+        - directApiKey: []   # Only for direct customers
       requestBody:
         required: true
         content:
@@ -100,9 +101,9 @@ paths:
 
 components:
   securitySchemes:
-    rapidapiKey:
+    directApiKey:
       type: apiKey
       in: header
-      name: X-RapidAPI-Key
+      name: x-api-key   # <-- Only expose your own direct key
 security:
-  - rapidapiKey: []
+  - directApiKey: []   # Default for direct users
