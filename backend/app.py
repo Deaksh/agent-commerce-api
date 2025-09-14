@@ -526,12 +526,11 @@ async def get_api_record_from_hash(h: str) -> Optional[dict]:
     return rec
 
 
-
+# --- API key handler (hybrid: direct or RapidAPI) ---
 async def get_api_record(
-    x_api_key: str = Header(None, alias="x-api-key"),
-    x_rapidapi_key: str = Header(None, alias="X-RapidAPI-Key")
+    x_api_key: str = Header(None, alias="x-api-key")
 ):
-    # Case 1: Direct customer key (your Redis)
+    # Case 1: Direct customer key (validate against Redis)
     if x_api_key:
         h = hash_key(x_api_key)
         rec = await get_api_record_from_hash(h)
@@ -540,14 +539,11 @@ async def get_api_record(
         if rec.get("disabled") == "1":
             raise HTTPException(status_code=403, detail="API key disabled")
         rec["key_hash"] = h
+        rec["plan"] = rec.get("plan", "direct")
         return rec
 
-    # Case 2: RapidAPI user (skip Redis, trust RapidAPI gateway)
-    if x_rapidapi_key:
-        return {"plan": "rapidapi", "quota": "handled_by_rapidapi"}
-
-    # If neither header is present
-    raise HTTPException(status_code=401, detail="Missing API key")
+    # Case 2: RapidAPI user (we trust RapidAPI proxy)
+    return {"plan": "rapidapi", "quota": "handled_by_rapidapi"}
 
 
 async def seconds_until_month_end():
@@ -557,9 +553,10 @@ async def seconds_until_month_end():
     return int((end - now).total_seconds()) + 1
 
 
+# --- Quota enforcement ---
 async def enforce_quota(api_record: dict = Depends(get_api_record)):
     if api_record.get("plan") == "rapidapi":
-        # RapidAPI handles quota & billing
+        # RapidAPI handles auth & billing
         return {"usage": "handled_by_rapidapi", "quota": "handled_by_rapidapi", "plan": "rapidapi"}
     
     # Normal Redis quota check for direct customers
@@ -572,6 +569,7 @@ async def enforce_quota(api_record: dict = Depends(get_api_record)):
     if current > quota:
         raise HTTPException(status_code=429, detail="Monthly quota exceeded")
     return {"usage": current, "quota": quota, "plan": api_record.get("plan")}
+
 
 
 # ---------- admin endpoints ----------
