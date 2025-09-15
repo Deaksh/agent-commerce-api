@@ -336,13 +336,14 @@ def extract_product_info(html: str, url: str) -> Dict[str, Optional[str]]:
             price_symbol = soup.select_one("span.a-price-symbol")
             if price_whole:
                 price_value = price_whole.get_text(strip=True)
-                symbol = price_symbol.get_text(strip=True) if price_symbol else "₹"
+                symbol = price_symbol.get_text(strip=True) if price_symbol else ""
                 price_tag = type("obj", (object,), {"text": f"{symbol}{price_value}"})
         avail_tag = soup.select_one("#availability span, #availability .a-color-success")
         # --- FIX: detect currency ---
         currency = None
         if price_tag:
             text = price_tag.get_text(strip=True)
+            domain = urlparse(url).netloc.lower()
             if "$" in text:
                 # Decide based on domain if it’s USD, CAD, etc.
                 domain = urlparse(url).netloc
@@ -463,6 +464,7 @@ def extract_product_info(html: str, url: str) -> Dict[str, Optional[str]]:
         currency = None
         if price_tag:
             text = price_tag.get_text(strip=True)
+            domain = urlparse(url).netloc.lower()
             if "$" in text:
                 # Decide based on domain if it’s USD, CAD, etc.
                 domain = urlparse(url).netloc
