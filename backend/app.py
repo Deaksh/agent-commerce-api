@@ -338,38 +338,38 @@ def extract_product_info(html: str, url: str) -> Dict[str, Optional[str]]:
                 price_value = price_whole.get_text(strip=True)
                 symbol = price_symbol.get_text(strip=True) if price_symbol else ""
                 price_tag = type("obj", (object,), {"text": f"{symbol}{price_value}"})
+    
         avail_tag = soup.select_one("#availability span, #availability .a-color-success")
-        # --- FIX: detect currency ---
+    
+        # --- FIX: detect currency BEFORE cleaning ---
+        raw_price = price_tag.get_text(strip=True) if price_tag else ""
+        domain = urlparse(url).netloc.lower()
+    
         currency = None
-        if price_tag:
-            text = price_tag.get_text(strip=True)
-            domain = urlparse(url).netloc.lower()
-            if "$" in text:
-                # Decide based on domain if it’s USD, CAD, etc.
-                domain = urlparse(url).netloc
-                if domain.endswith("amazon.com"):
-                    currency = "USD"
-                elif domain.endswith("amazon.ca"):
-                    currency = "CAD"
-                elif domain.endswith("amazon.com.mx"):
-                    currency = "MXN"
-                else:
-                    currency = "USD"  # fallback
-            elif "₹" in text:
-                currency = "INR"
-            elif "£" in text:
-                currency = "GBP"
-            elif "€" in text:
-                currency = "EUR"
+        if "$" in raw_price:
+            if domain.endswith("amazon.com"):
+                currency = "USD"
+            elif domain.endswith("amazon.ca"):
+                currency = "CAD"
+            elif domain.endswith("amazon.com.mx"):
+                currency = "MXN"
             else:
-                currency = None  # unknown, leave empty
+                currency = "USD"
+        elif "₹" in raw_price:
+            currency = "INR"
+        elif "£" in raw_price:
+            currency = "GBP"
+        elif "€" in raw_price:
+            currency = "EUR"
+    
         product.update({
             "name": name_tag.get_text(strip=True) if name_tag else None,
-            "price": clean_price(price_tag.get_text(strip=True)) if price_tag else None,
+            "price": clean_price(raw_price) if raw_price else None,  # clean AFTER currency detection
             "currency": currency,
             "availability": avail_tag.get_text(strip=True) if avail_tag else None,
         })
         return product
+
 
     # flipkart
     if "flipkart." in url:
@@ -428,16 +428,43 @@ def extract_product_info(html: str, url: str) -> Dict[str, Optional[str]]:
         if product_data:
             name = product_data.get("name") or product_data.get("displayName") or product_data.get("productName")
             price = extract_price_from_product_dict(product_data)
+        
+            # --- Detect currency from product_data ---
             currency = None
             if isinstance(product_data.get("price"), dict):
-                currency = product_data.get("price").get("currency") or product_data.get("price").get("currencyCode")
+                currency = (
+                    product_data.get("price").get("currency")
+                    or product_data.get("price").get("currencyCode")
+                )
+        
+            # fallback: detect currency from price text if possible
             if not currency and price:
-                currency = "INR"
+                raw_price = str(price)
+                if "$" in raw_price:
+                    domain = urlparse(url).netloc.lower()
+                    if domain.endswith("amazon.com"):
+                        currency = "USD"
+                    elif domain.endswith("amazon.ca"):
+                        currency = "CAD"
+                    elif domain.endswith("amazon.com.mx"):
+                        currency = "MXN"
+                    else:
+                        currency = "USD"
+                elif "₹" in raw_price:
+                    currency = "INR"
+                elif "£" in raw_price:
+                    currency = "GBP"
+                elif "€" in raw_price:
+                    currency = "EUR"
+        
             availability = None
             if isinstance(product_data.get("inStock"), bool):
                 availability = "In stock" if product_data.get("inStock") else "Out of stock"
             elif isinstance(product_data.get("stock"), dict):
-                availability = "In stock" if product_data.get("stock").get("available", True) else "Out of stock"
+                availability = (
+                    "In stock" if product_data.get("stock").get("available", True) else "Out of stock"
+                )
+        
             product.update({
                 "name": name,
                 "price": clean_price(price) if price else None,
@@ -446,7 +473,8 @@ def extract_product_info(html: str, url: str) -> Dict[str, Optional[str]]:
             })
             if product.get("name") or product.get("price"):
                 return product
-
+        
+        # --- soup fallback parsing ---
         name_tag = soup.select_one("h1.pdp-title, h1.pdp-name")
         price_tag = (
             soup.select_one("span.pdp-price strong")
@@ -457,17 +485,15 @@ def extract_product_info(html: str, url: str) -> Dict[str, Optional[str]]:
         avail_btn = soup.select_one("button.pdp-add-to-bag")
         oos_btn = soup.select_one("button.pdp-out-of-stock")
         oos_text = soup.find(string=lambda t: t and "out of stock" in t.lower())
+        
         clean_price_val = None
-        if price_tag:
-            clean_price_val = clean_price(price_tag.get_text(strip=True))
-            # --- FIX: detect currency ---
         currency = None
         if price_tag:
-            text = price_tag.get_text(strip=True)
+            raw_price = price_tag.get_text(strip=True)
+        
+            # --- Detect currency BEFORE cleaning ---
             domain = urlparse(url).netloc.lower()
-            if "$" in text:
-                # Decide based on domain if it’s USD, CAD, etc.
-                domain = urlparse(url).netloc
+            if "$" in raw_price:
                 if domain.endswith("amazon.com"):
                     currency = "USD"
                 elif domain.endswith("amazon.ca"):
@@ -475,15 +501,16 @@ def extract_product_info(html: str, url: str) -> Dict[str, Optional[str]]:
                 elif domain.endswith("amazon.com.mx"):
                     currency = "MXN"
                 else:
-                    currency = "USD"  # fallback
-            elif "₹" in text:
+                    currency = "USD"
+            elif "₹" in raw_price:
                 currency = "INR"
-            elif "£" in text:
+            elif "£" in raw_price:
                 currency = "GBP"
-            elif "€" in text:
+            elif "€" in raw_price:
                 currency = "EUR"
-            else:
-                currency = None  # unknown, leave empty
+        
+            clean_price_val = clean_price(raw_price)
+        
         product.update({
             "name": name_tag.get_text(strip=True) if name_tag else None,
             "price": clean_price_val,
@@ -491,13 +518,15 @@ def extract_product_info(html: str, url: str) -> Dict[str, Optional[str]]:
             "availability": ("Out of stock" if (oos_btn or oos_text) else ("In stock" if avail_btn else None))
         })
         return product
+        
+        # --- final fallback: page <title> ---
+        title = soup.find("title")
+        product.update({
+            "name": title.get_text(strip=True) if title else None,
+            "availability": "In stock"
+        })
+        return product
 
-    title = soup.find("title")
-    product.update({
-        "name": title.get_text(strip=True) if title else None,
-        "availability": "In stock"
-    })
-    return product
 
 
 # ---------- audit scoring (keeps your logic) ----------
