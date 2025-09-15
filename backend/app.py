@@ -16,6 +16,7 @@ from bs4 import BeautifulSoup
 from playwright.async_api import async_playwright
 import httpx
 import redis.asyncio as redis
+from urllib.parse import urlparse
 
 # ---------- logging ----------
 logging.basicConfig(level=logging.INFO)
@@ -338,10 +339,33 @@ def extract_product_info(html: str, url: str) -> Dict[str, Optional[str]]:
                 symbol = price_symbol.get_text(strip=True) if price_symbol else "₹"
                 price_tag = type("obj", (object,), {"text": f"{symbol}{price_value}"})
         avail_tag = soup.select_one("#availability span, #availability .a-color-success")
+        # --- FIX: detect currency ---
+        currency = None
+        if price_tag:
+            text = price_tag.get_text(strip=True)
+            if "$" in text:
+                # Decide based on domain if it’s USD, CAD, etc.
+                domain = urlparse(url).netloc
+                if domain.endswith("amazon.com"):
+                    currency = "USD"
+                elif domain.endswith("amazon.ca"):
+                    currency = "CAD"
+                elif domain.endswith("amazon.com.mx"):
+                    currency = "MXN"
+                else:
+                    currency = "USD"  # fallback
+            elif "₹" in text:
+                currency = "INR"
+            elif "£" in text:
+                currency = "GBP"
+            elif "€" in text:
+                currency = "EUR"
+            else:
+                currency = None  # unknown, leave empty
         product.update({
             "name": name_tag.get_text(strip=True) if name_tag else None,
             "price": clean_price(price_tag.get_text(strip=True)) if price_tag else None,
-            "currency": "INR" if price_tag else None,
+            "currency": currency,
             "availability": avail_tag.get_text(strip=True) if avail_tag else None,
         })
         return product
@@ -435,10 +459,33 @@ def extract_product_info(html: str, url: str) -> Dict[str, Optional[str]]:
         clean_price_val = None
         if price_tag:
             clean_price_val = clean_price(price_tag.get_text(strip=True))
+            # --- FIX: detect currency ---
+        currency = None
+        if price_tag:
+            text = price_tag.get_text(strip=True)
+            if "$" in text:
+                # Decide based on domain if it’s USD, CAD, etc.
+                domain = urlparse(url).netloc
+                if domain.endswith("amazon.com"):
+                    currency = "USD"
+                elif domain.endswith("amazon.ca"):
+                    currency = "CAD"
+                elif domain.endswith("amazon.com.mx"):
+                    currency = "MXN"
+                else:
+                    currency = "USD"  # fallback
+            elif "₹" in text:
+                currency = "INR"
+            elif "£" in text:
+                currency = "GBP"
+            elif "€" in text:
+                currency = "EUR"
+            else:
+                currency = None  # unknown, leave empty
         product.update({
             "name": name_tag.get_text(strip=True) if name_tag else None,
             "price": clean_price_val,
-            "currency": "INR" if clean_price_val else None,
+            "currency": currency,
             "availability": ("Out of stock" if (oos_btn or oos_text) else ("In stock" if avail_btn else None))
         })
         return product
@@ -588,10 +635,6 @@ async def admin_create_key(plan: str = "dev", quota: int = 1000, ok: bool = Depe
 
 
 # ---------- main audit endpoint (protected) ----------
-from urllib.parse import urlparse
-import re
-import datetime
-from fastapi import HTTPException, Depends
 
 # --- Amazon affiliate helper ---
 def build_affiliate_amazon_url(url: str, affiliate_tag: str = "deakshamazon-21") -> str:
