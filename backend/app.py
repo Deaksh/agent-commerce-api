@@ -52,6 +52,7 @@ class ProductInfo(BaseModel):
 
 class AuditResponse(BaseModel):
     url: HttpUrl
+    affiliate_url: Optional[str] = None
     product_info: ProductInfo
     score: float
     recommendations: List[str]
