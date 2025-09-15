@@ -587,13 +587,41 @@ async def admin_create_key(plan: str = "dev", quota: int = 1000, ok: bool = Depe
 
 
 # ---------- main audit endpoint (protected) ----------
+from urllib.parse import urlparse
+import re
+import datetime
+from fastapi import HTTPException, Depends
+
+# --- Amazon affiliate helper ---
+def build_affiliate_amazon_url(url: str, affiliate_tag: str = "deakshamazon-21") -> str:
+    """
+    Normalize Amazon product URLs into clean affiliate links.
+    Example:
+      Input: https://www.amazon.in/Some-Product/dp/B0D12345/ref=abc?qid=123
+      Output: https://www.amazon.in/dp/B0D12345/?tag=deakshamazon-21
+    """
+    parsed = urlparse(url)
+    host = parsed.netloc
+
+    # Try to extract ASIN (10-char alphanumeric) from /dp/ or /gp/product/ paths
+    asin_match = re.search(r"/(?:dp|gp/product)/([A-Z0-9]{10})(?:[/?]|$)", parsed.path)
+    if asin_match:
+        asin = asin_match.group(1)
+        return f"https://{host}/dp/{asin}/?tag={affiliate_tag}"
+
+    # Fallback: append tag directly
+    sep = "&" if "?" in url else "?"
+    return f"{url}{sep}tag={affiliate_tag}"
+
+
 @app.post("/audit", response_model=AuditResponse)
 async def audit_store(
     request: AuditRequest,
     api_record: dict = Depends(get_api_record),
     _usage: dict = Depends(enforce_quota),
 ):
-    url = str(request.url)
+    original_url = str(request.url)
+    url = original_url  # will mutate for affiliate if Amazon
     log.info("Audit requested for: %s (by plan=%s)", url, api_record.get("plan"))
 
     # 1) check cache
@@ -619,9 +647,8 @@ async def audit_store(
     if not html:
         raise HTTPException(status_code=502, detail="Failed to fetch target page")
 
-    # Try parse even if block markers exist (we already tried to force proxy for myntra)
+    # Try parse even if block markers exist
     product = extract_product_info(html, url)
-    # If no useful product info, try proxy fallback (if available and not already proxy)
     if (not product.get("name") and not product.get("price")) and SCRAPER_API_KEY and fetched_via != "proxy":
         log.info("No product data found; trying proxy fallback")
         proxy_html = await fetch_via_proxy(url)
@@ -645,8 +672,16 @@ async def audit_store(
         raw_html_excerpt=(html[:200] if html else None),
     )
 
+    # --- Amazon affiliate handling ---
+    affiliate_url = None
+    if "amazon." in url:
+        affiliate_url = build_affiliate_amazon_url(original_url, affiliate_tag="deakshamazon-21")
+        log.info("Amazon URL normalized with affiliate tag: %s", affiliate_url)
+
     response_payload = {
-        "url": url,
+        "original_url": original_url,     # Always keep user input
+        "url": url,                       # Used internally (may be same as original_url)
+        "affiliate_url": affiliate_url,   # Only for Amazon, otherwise None
         "product_info": pinfo.dict(),
         "score": score,
         "recommendations": recommendations,
